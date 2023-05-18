@@ -101,9 +101,20 @@ int main(int argc, const char** argv)
         return 0;
     }
 
-    while (key != 27) {
-        r.clear(rst::Buffers::Color | rst::Buffers::Depth);
+    float fps = 30.0;
+    int lastFrameCount = frame_count;
+    clock_t lastTime = clock(), nowTime = clock();
 
+    while (key != 27) {
+
+        nowTime = clock();
+        if (double(nowTime - lastTime) >= CLOCKS_PER_SEC * 0.5) {
+            fps = (frame_count - lastFrameCount) * CLOCKS_PER_SEC / double(nowTime - lastTime);
+            lastTime = nowTime;
+            lastFrameCount = frame_count;
+        }
+
+        r.clear(rst::Buffers::Color | rst::Buffers::Depth);
         r.set_model(get_model_matrix(angle));
         r.set_view(get_view_matrix(eye_pos));
         r.set_projection(get_projection_matrix(45, 1, 0.1, 50));
@@ -111,6 +122,9 @@ int main(int argc, const char** argv)
         r.draw(pos_id, ind_id, rst::Primitive::Triangle);
 
         cv::Mat image(700, 700, CV_32FC3, r.frame_buffer().data());
+        cv::putText(image, "fps:" + std::to_string(fps), cv::Point(50, 50), 
+            cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255));
+
         image.convertTo(image, CV_8UC3, 1.0f);
         cv::imshow("image", image);
         key = cv::waitKey(10);
