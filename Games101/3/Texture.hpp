@@ -41,10 +41,10 @@ public:
         auto v_lower = std::min(std::max(static_cast<int>(std::floor(v_img)), 0), height);
         auto v_upper = std::min(std::max(static_cast<int>(std::ceil(v_img)), 0), height);
 
-        auto color_a = image_data.at<cv::Vec3b>(u_lower, v_lower);
-        auto color_b = image_data.at<cv::Vec3b>(u_lower, v_upper);
-        auto color_c = image_data.at<cv::Vec3b>(u_upper, v_lower);
-        auto color_d = image_data.at<cv::Vec3b>(u_upper, v_upper);
+        auto color_a = image_data.at<cv::Vec3b>(v_lower, u_lower);
+        auto color_b = image_data.at<cv::Vec3b>(v_lower, u_upper);
+        auto color_c = image_data.at<cv::Vec3b>(v_upper, u_lower);
+        auto color_d = image_data.at<cv::Vec3b>(v_upper, u_upper);
         auto color = color_a * (u_upper - u_img) * (v_upper - v_img) +
                      color_b * (u_upper - u_img) * (v_img - v_lower) +
                      color_c * (u_img - u_lower) * (v_upper - v_img) +
