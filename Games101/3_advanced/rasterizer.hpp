@@ -77,11 +77,9 @@ namespace rst
     class rasterizer
     {
     public:
+        static const int BUFNUM = 2;
+
         rasterizer(int w, int h, int thread_num_sqrt);
-        pos_buf_id load_positions(const std::vector<Eigen::Vector3f>& positions);
-        ind_buf_id load_indices(const std::vector<Eigen::Vector3i>& indices);
-        col_buf_id load_colors(const std::vector<Eigen::Vector3f>& colors);
-        col_buf_id load_normals(const std::vector<Eigen::Vector3f>& normals);
 
         void set_model(const Eigen::Matrix4f& m);
         void set_view(const Eigen::Matrix4f& v);
@@ -92,17 +90,15 @@ namespace rst
         void set_vertex_shader(std::function<Eigen::Vector3f(vertex_shader_payload)> vert_shader);
         void set_fragment_shader(std::function<Eigen::Vector3f(fragment_shader_payload)> frag_shader);
 
-        void set_pixel(const Vector2i &point, const Eigen::Vector3f &color);
+        void clear(Buffers buff, int id);
 
-        void clear(Buffers buff);
+        void draw(std::vector<Triangle *> &TriangleList, int id);
 
-        void draw(std::vector<Triangle *> &TriangleList);
-
-        std::vector<Eigen::Vector3f>& frame_buffer() { return frame_buf; }
+        std::vector<Eigen::Vector3f>& frame_buffer(int id) 
+        { return frame_buf[id]; }
 
         ~rasterizer();
     private:
-        void draw_line(Eigen::Vector3f begin, Eigen::Vector3f end);
 
         void rasterize_triangle(int id);
 
@@ -114,6 +110,7 @@ namespace rst
 
         // VERTEX SHADER -> MVP -> Clipping -> /.W -> VIEWPORT -> DRAWLINE/DRAWTRI -> FRAGSHADER
 
+        
     private:
         Eigen::Matrix4f model;
         Eigen::Matrix4f view;
@@ -121,26 +118,19 @@ namespace rst
 
         int normal_id = -1;
 
-        std::map<int, std::vector<Eigen::Vector3f>> pos_buf;
-        std::map<int, std::vector<Eigen::Vector3i>> ind_buf;
-        std::map<int, std::vector<Eigen::Vector3f>> col_buf;
-        std::map<int, std::vector<Eigen::Vector3f>> nor_buf;
-
         std::optional<Texture> texture;
 
         std::function<Eigen::Vector3f(fragment_shader_payload)> fragment_shader;
         std::function<Eigen::Vector3f(vertex_shader_payload)> vertex_shader;
 
         std::vector<std::thread> render_threads;
-        std::vector<Eigen::Vector3f> frame_buf;
-        std::vector<float> depth_buf;
+        std::vector<Eigen::Vector3f> frame_buf[BUFNUM];
+        std::vector<float> depth_buf[BUFNUM];
         int get_index(int x, int y);
 
         int width, height;
+        int draw_id;
         
         ThreadPayload thread_payload;
-
-        int next_id = 0;
-        int get_next_id() { return next_id++; }
     };
 }

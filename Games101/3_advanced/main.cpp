@@ -1,6 +1,7 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
 
+#include <thread>
 #include "global.hpp"
 #include "rasterizer.hpp"
 #include "Triangle.hpp"
@@ -23,7 +24,7 @@ Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
     return view;
 }
 
-Eigen::Matrix4f get_model_matrix(float angle)
+Eigen::Matrix4f get_model_matrix(float angle, Vector3f position)
 {
     Eigen::Matrix4f rotation;
     angle = angle * MY_PI / 180.f;
@@ -39,9 +40,9 @@ Eigen::Matrix4f get_model_matrix(float angle)
               0, 0, 0, 1;
 
     Eigen::Matrix4f translate;
-    translate << 1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
+    translate << 1, 0, 0, position.x(),
+            0, 1, 0, position.y(),
+            0, 0, 1, position.z(),
             0, 0, 0, 1;
 
     return translate * rotation * scale;
@@ -255,15 +256,46 @@ Eigen::Vector3f bump_fragment_shader(const fragment_shader_payload& payload)
     return result_color * 255.f;
 }
 
-void render_thread(rst::rasterizer & r)
+struct RenderThreadPayload 
 {
+    bool exit = false;
+    std::mutex mutexs[rst::rasterizer::BUFNUM];
+    rst::rasterizer r = rst::rasterizer(700, 700, 8);
+    Vector3f eye_pos;
+    float angle;
+    float position;
+    std::vector<Triangle*> triangleList;
+};
+
+void render_thread_fn(RenderThreadPayload * payload)
+{
+    int image_index = 0;
+    while (!payload->exit) {
+        std::unique_lock<std::mutex> lock(payload->mutexs[image_index]);
+        rst::rasterizer* r = &(payload->r);
+        r->clear(rst::Buffers::Color | rst::Buffers::Depth, image_index);
+
+        r->set_model(get_model_matrix(payload->angle, Vector3f(payload->position, 0.0f, 0.0f)));
+        r->set_view(get_view_matrix(payload->eye_pos));
+        r->set_projection(get_projection_matrix(45.0, 1, 0.1, 50));
+        r->draw(payload->triangleList, image_index);
+
+        r->set_model(get_model_matrix(-payload->angle, Vector3f(-payload->position, 0.0f, 0.0f)));
+        r->set_view(get_view_matrix(payload->eye_pos));
+        r->set_projection(get_projection_matrix(45.0, 1, 0.1, 50));
+        r->draw(payload->triangleList, image_index);
+
+        image_index = (image_index + 1) % payload->r.BUFNUM;
+        lock.unlock();
+    }
 }
 
 int main(int argc, const char** argv)
 {
-    std::vector<Triangle*> TriangleList;
+    RenderThreadPayload payload;
 
-    float angle = 140.0;
+    payload.angle = 140.0;
+    payload.position = 2.5f;
     bool command_line = false;
 
     std::string filename = "output.png";
@@ -283,14 +315,12 @@ int main(int argc, const char** argv)
                 t->setNormal(j,Vector3f(mesh.Vertices[i+j].Normal.X,mesh.Vertices[i+j].Normal.Y,mesh.Vertices[i+j].Normal.Z));
                 t->setTexCoord(j,Vector2f(mesh.Vertices[i+j].TextureCoordinate.X, mesh.Vertices[i+j].TextureCoordinate.Y));
             }
-            TriangleList.push_back(t);
+            payload.triangleList.push_back(t);
         }
     }
 
-    rst::rasterizer r(700, 700, 8);
-
     auto texture_path = "hmap.jpg";
-    r.set_texture(Texture(obj_path + texture_path));
+    payload.r.set_texture(Texture(obj_path + texture_path));
 
     std::function<Eigen::Vector3f(fragment_shader_payload)> active_shader = phong_fragment_shader;
 
@@ -304,7 +334,7 @@ int main(int argc, const char** argv)
             std::cout << "Rasterizing using the texture shader\n";
             active_shader = texture_fragment_shader;
             texture_path = "spot_texture.png";
-            r.set_texture(Texture(obj_path + texture_path));
+            payload.r.set_texture(Texture(obj_path + texture_path));
         }
         else if (argc == 3 && std::string(argv[2]) == "normal")
         {
@@ -328,51 +358,65 @@ int main(int argc, const char** argv)
         }
     }
 
-    Eigen::Vector3f eye_pos = {0,0,10};
+    payload.eye_pos = {0,0,10};
 
-    r.set_vertex_shader(vertex_shader);
-    r.set_fragment_shader(active_shader);
+    payload.r.set_vertex_shader(vertex_shader);
+    payload.r.set_fragment_shader(active_shader);
+
+    //for (int i = 0; i < payload.r.BUFNUM; i++) {
+    //    payload.mutexs.emplace_back();
+    //}
+
+    std::thread render_thread(render_thread_fn, &payload);
 
     int key = 0;
+    float fps = 0.0;
+    int image_index = 0;
     int frame_count = 0;
     int lastFrameCount = frame_count;
     clock_t lastTime = clock(), nowTime = clock();
-
+    
     while(key != 27)
     {
         nowTime = clock();
         if (double(nowTime - lastTime) >= CLOCKS_PER_SEC * 0.5) {
-            float fps = (frame_count - lastFrameCount) * CLOCKS_PER_SEC / double(nowTime - lastTime);
+            fps = (frame_count - lastFrameCount) * CLOCKS_PER_SEC / double(nowTime - lastTime);
             lastTime = nowTime;
             lastFrameCount = frame_count;
-            std::cout << fps << std::endl;
         }
 
-        r.clear(rst::Buffers::Color | rst::Buffers::Depth);
+        std::unique_lock<std::mutex> lock(payload.mutexs[image_index]);
 
-        r.set_model(get_model_matrix(angle));
-        r.set_view(get_view_matrix(eye_pos));
-        r.set_projection(get_projection_matrix(45.0, 1, 0.1, 50));
-
-        r.draw(TriangleList);
-
-        /*cv::Mat image(700, 700, CV_32FC3, r.frame_buffer().data());
+        cv::Mat image(700, 700, CV_32FC3, payload.r.frame_buffer(image_index).data());
+        cv::putText(image, "fps:" + std::to_string(fps), cv::Point(50, 50),
+            cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255));
         image.convertTo(image, CV_8UC3, 1.0f);
         cv::cvtColor(image, image, cv::COLOR_RGB2BGR);
-
         cv::imshow("image", image);
-        key = cv::waitKey(1);*/
 
+        key = cv::waitKey(1);
         if (key == 'a' )
         {
-            angle -= 0.1;
+            payload.angle -= 1;
         }
         else if (key == 'd')
         {
-            angle += 0.1;
+            payload.angle += 1;
         }
+        else if (key == 'w')
+        {
+            payload.position += 0.1;
+        }
+        else if (key == 's')
+        {
+            payload.position -= 0.1;
+        }
+        image_index = (image_index + 1) % payload.r.BUFNUM;
+        lock.unlock();
 
         frame_count++;
     }
+    payload.exit = true;
+    render_thread.join();
     return 0;
 }
