@@ -150,6 +150,7 @@ void rst::rasterizer::rasterize_triangle(int id)
                 auto [alpha, beta, gamma] = computeBarycentric2D(i + 0.5, j + 0.5, t->v);
                 Vector3f weight(alpha / v[0].w(), beta / v[1].w(), gamma / v[2].w());
                 weight = weight / (weight.x() + weight.y() + weight.z());
+                if (isnan(weight.x()) || isnan(weight.y()) || isnan(weight.z())) { continue; }
                 float depth = v[0].z() * weight.x() + v[1].z() * weight.y() + v[2].z() * weight.z();
 
                 if (depth > depth_buf[draw_id][index]) { continue; }
