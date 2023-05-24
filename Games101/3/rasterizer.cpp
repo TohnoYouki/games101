@@ -282,11 +282,9 @@ void rst::rasterizer::rasterize_triangle(const Triangle& t, const std::array<Eig
                 fragment_shader_payload payload(color, normal.normalized(), tex_coords, texture ? &*texture : nullptr);
                 payload.view_pos = view_pos[0] * weight.x() + view_pos[1] * weight.y() + view_pos[2] * weight.z();
                 auto pixel_color = fragment_shader(payload);
-                if (z_interpolated <= depth_buf[get_index(i, j)])
-                {
-                    depth_buf[get_index(i, j)] = z_interpolated;
-                    frame_buf[get_index(i, j)] = pixel_color;
-                }
+
+                depth_buf[get_index(i, j)] = z_interpolated;
+                frame_buf[get_index(i, j)] = pixel_color;
             }
         }
     }
