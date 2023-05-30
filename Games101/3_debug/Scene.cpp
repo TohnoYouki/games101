@@ -151,6 +151,9 @@ static int cubemap_face(const Eigen::Vector3f& vector) {
 }
 
 #define NUM_RINGS 3
+#define NUM_SAMPLES 100
+#define NUM_ARRAY 100
+
 static void poissonDiskSamples(
     float seed, Eigen::Vector2f samples[], int number)
 {
@@ -163,6 +166,16 @@ static void poissonDiskSamples(
         samples[i] *= std::pow(radius, 0.75);
         radius += radius_step;
         angle += angle_step;
+    }
+}
+
+void PointLight::generate_poisson_disk_samples() 
+{
+    poisson_disk_samples.clear();
+    poisson_disk_samples.resize(NUM_ARRAY * NUM_SAMPLES);
+    for (int i = 0; i < NUM_ARRAY; i++) {
+        poissonDiskSamples((rand() % (10000) / 10000), 
+            poisson_disk_samples.data() + i * NUM_SAMPLES, NUM_SAMPLES);
     }
 }
 
@@ -185,10 +198,9 @@ float PointLight::shadowmap(const Eigen::Vector3f& vector, float NdotL)
     return target.z() < depth + (2.0 - NdotL) * bias;
 }
 
-#define NUM_SAMPLES 10
 float PointLight::pcf(const Eigen::Vector3f& vector, float NdotL)
 {
-    const float bias = 5e-3;
+    float bias = (2.0 - NdotL) * 5e-3;
     const float world_radius = 0.2;
     int id = cubemap_face(vector);
     Eigen::Matrix4f matrix = shadow_view_matrix(id);
@@ -203,27 +215,26 @@ float PointLight::pcf(const Eigen::Vector3f& vector, float NdotL)
     float depth = -project(2, 3) / (target.z() - project(2, 2));
 
     int samples = NUM_SAMPLES;
-    Eigen::Vector2f sampleOffsets[NUM_SAMPLES];
-    poissonDiskSamples(rand(), sampleOffsets, samples);
+    int aindex = rand() % NUM_ARRAY;
     float shadow = 0.0;
-    Eigen::Vector2f size(width, height);
 
     for (int i = 0; i < samples; i++)
     {
-        Eigen::Vector2f sample = uv + sampleOffsets[i] * radius;
-        sample = sample.cwiseMin(1.0 - 1e-5).cwiseMax(0.0).cwiseProduct(size);
-        int index = (size.y() - int(sample.y()) - 1) * size.x() + int(sample.x());
+        Eigen::Vector2f offset = poisson_disk_samples[aindex * NUM_SAMPLES + i];
+        float u = std::min(std::max(uv.x() + offset.x() * radius, 0.0f), 1.0f - 1e-5f) * width;
+        float v = std::min(std::max(uv.y() + offset.y() * radius, 0.0f), 1.0f - 1e-5f) * height;
+        int index = (height - int(v) - 1) * width + int(u);
         float closest = shadowmaps[id][index];
-        if (isinf(closest)) { shadow += 1.0; }
+        if (closest > 0) { shadow += 1.0; }
         closest = -project(2, 3) / (closest - project(2, 2));
-        if (depth < closest + (2.0 - NdotL) * bias) { shadow += 1; }
+        if (depth < closest + bias) { shadow += 1; }
     }
     return shadow / samples;
 }
 
 float PointLight::pcss(const Eigen::Vector3f& vector, float NdotL)
 {
-    const float bias = 5e-3;
+    float bias = (2.0 - NdotL) * 5e-3;
     int id = cubemap_face(vector);
     Eigen::Matrix4f matrix = shadow_view_matrix(id);
     Eigen::Matrix4f project = camera.get_projection_matrix();
@@ -237,25 +248,22 @@ float PointLight::pcss(const Eigen::Vector3f& vector, float NdotL)
 
     const float world_radius = 0.2;
     float radius = world_radius / (2 * std::abs(vector(id / 2)));
-
     int samples = NUM_SAMPLES;
-    Eigen::Vector2f size(width, height);
-    Eigen::Vector2f sampleOffsets[NUM_SAMPLES];
-    poissonDiskSamples(rand(), sampleOffsets, samples);
+    int aindex = rand() % NUM_ARRAY;
 
     float dblock = 0.0, count = 0.0;
     for (int i = 0; i < samples; i++)
     {
-        Eigen::Vector2f sample = uv + sampleOffsets[i] * radius;
-        sample = sample.cwiseMin(1.0 - 1e-5).cwiseMax(0.0).cwiseProduct(size);
-        int index = (size.y() - int(sample.y()) - 1) * size.x() + int(sample.x());
+        Eigen::Vector2f offset = poisson_disk_samples[aindex * NUM_SAMPLES + i];
+        float u = std::min(std::max(uv.x() + offset.x() * radius, 0.0f), 1.0f - 1e-5f) * width;
+        float v = std::min(std::max(uv.y() + offset.y() * radius, 0.0f), 1.0f - 1e-5f) * height;
+        int index = (height - int(v) - 1) * width + int(u);
         float closest = shadowmaps[id][index];
-        if (isinf(closest)) { continue; }
+        bool blocker = closest <= 0;
         closest = -project(2, 3) / (closest - project(2, 2));
-        if (dreceiver >= closest + (2.0 - NdotL) * bias) {
-            dblock += closest;
-            count += 1;
-        }
+        blocker &= dreceiver >= closest + bias;
+        dblock += blocker ? closest : 0;
+        count += blocker ? 1 : 0;
     }
     if (count == 0) { return 1.0; }
     dblock /= count;
@@ -263,15 +271,17 @@ float PointLight::pcss(const Eigen::Vector3f& vector, float NdotL)
     radius = radius / (2 * std::abs(vector(id / 2)));
 
     float shadow = 0.0;
+    aindex = rand() % NUM_ARRAY;
     for (int i = 0; i < samples; i++)
     {
-        Eigen::Vector2f sample = uv + sampleOffsets[i] * radius;
-        sample = sample.cwiseMin(1.0 - 1e-5).cwiseMax(0.0).cwiseProduct(size);
-        int index = (size.y() - int(sample.y()) - 1) * size.x() + int(sample.x());
+        Eigen::Vector2f offset = poisson_disk_samples[aindex * NUM_SAMPLES + i];
+        float u = std::min(std::max(uv.x() + offset.x() * radius, 0.0f), 1.0f - 1e-5f) * width;
+        float v = std::min(std::max(uv.y() + offset.y() * radius, 0.0f), 1.0f - 1e-5f) * height;
+        int index = (height - int(v) - 1) * width + int(u);
         float closest = shadowmaps[id][index];
-        if (isinf(closest)) { shadow += 1.0; }
+        if (closest > 0) { shadow += 1.0; }
         closest = -project(2, 3) / (closest - project(2, 2));
-        if (dreceiver < closest + (2.0 - NdotL) * bias) { shadow += 1; }
+        if (dreceiver < closest + bias) { shadow += 1; }
     }
     return shadow / samples;
 }

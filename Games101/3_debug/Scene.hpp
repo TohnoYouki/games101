@@ -74,6 +74,8 @@ public:
 
 	Eigen::Matrix4f shadow_view_matrix(int id);
 
+	std::vector<Eigen::Vector2f> poisson_disk_samples;
+	void generate_poisson_disk_samples();
 	float shadowmap(const Eigen::Vector3f& vector, float NdotL);
 	float pcf(const Eigen::Vector3f& vector, float NdotL);
 	float pcss(const Eigen::Vector3f& vector, float NdotL);
