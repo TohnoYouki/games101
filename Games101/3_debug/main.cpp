@@ -23,16 +23,16 @@ void build_scene(Scene& scene)
     scene.meshes.push_back(load_mesh("../models/spot/spot_triangulated_good.obj"));
     scene.meshes.push_back(plane(15));
     scene.textures.push_back(Texture("../models/spot/spot_texture.png"));
-    scene.camera = { Transform({1.0, {0, 9, 10}, {0.0, -45.0, 0.0}}), 90, 1, 0.1, 50 };
+    scene.camera = { Transform({1.0, {0, 9, 10}, {0.0, -45.0, 0.0}}), 45, 1, 0.1, 50 };
     scene.objects.push_back(MeshObject{ Transform{2.5, {2.5, 0.0, 0.0},
                                         {140.0, 0.0, 0.0}}, &(scene.meshes[0]),
                                          vertex_shader, texture_shadow_fragment_shader });
     scene.objects.push_back(MeshObject{ Transform{2.5, {-2.5, 0.0, 0.0},
                                         {-140.0, 0.0, 0.0}}, &(scene.meshes[0]),
                                          vertex_shader, texture_shadow_fragment_shader });
-    scene.objects.push_back(MeshObject{ Transform{1.0, {0.0, -1.6, 0.0}, {0.0, -90.0, 0.0}},
+    scene.objects.push_back(MeshObject{ Transform{1.0, {0.0, -1.7, 0.0}, {0.0, -90.0, 0.0}},
                                         &(scene.meshes[1]), vertex_shader, phong_shadow_fragment_shader });
-    scene.lights.push_back(PointLight{ Camera{ Transform{ 1.0, {0, 10, 10}, {0.0, 0.0, 0.0} }, 
+    scene.lights.push_back(PointLight{ Camera{ Transform{ 1.0, {10, 10, 10}, {0.0, 0.0, 0.0} }, 
                                        90, 1, 0.1, 50 }, { 100, 100, 100 }, width * 2, height * 2});
     scene.lights.push_back(PointLight{ Camera { Transform{ 1.0, {-10, 10, 10}, {0.0, 0.0, 0.0} },
                                        90, 1, 0.1, 50 }, { 100, 100, 100 }, width * 2, height * 2});
@@ -40,15 +40,6 @@ void build_scene(Scene& scene)
     for (auto& object : scene.lights) {
         scene.pcameras.push_back(&(object.camera));
     }
-    scene.lights[0].camera.transform.rotate(Eigen::Vector3f(0, -14.5, 0));
-    scene.camera.transform.matrix = scene.lights[0].shadow_view_matrix(0).inverse();
-    
-    for (int i = 0; i < 6; i++) {
-        std::cout << scene.lights[0].shadow_view_matrix(i) << std::endl;
-        std::cout << std::endl;
-    }
-    std::cout << scene.lights[0].camera.get_projection_matrix() << std::endl;
-    std::cout << scene.lights[0].position() << std::endl;
 }
 
 void update_scene(Scene& scene, int* key)
@@ -91,7 +82,8 @@ void render_thread_fn(RenderThreadPayload * payload)
         update_scene(payload->scene, &(payload->key));
         FrameBuffer buffer = payload->swapchain.get_next_render_framebuffer();
         buffer.clear(BufferTypes::Color | BufferTypes::Depth);
-        /*
+        
+        r->backface_cull = false;
         for (auto& light : payload->scene.lights) {
             for (int i = 0; i < 6; i++) {
                 FrameBuffer depth_buf = FrameBuffer{ light.width, light.height, &(light.shadowmaps[i]), nullptr };
@@ -105,10 +97,11 @@ void render_thread_fn(RenderThreadPayload * payload)
                     r->draw(*(payload->scene.objects[j].mesh), payload->threads, depth_buf);
                 }
             }
-        }*/
+        }
         
+        r->backface_cull = true;
         Camera* camera = payload->scene.pcameras[payload->scene.camera_index];
-        for (int i = 2; i < payload->scene.objects.size(); i++)
+        for (int i = 0; i < payload->scene.objects.size(); i++)
         {
             r->set_vertex_shader(payload->scene.objects[i].vertex_shader);
             r->set_fragment_shader(payload->scene.objects[i].fragment_shader);

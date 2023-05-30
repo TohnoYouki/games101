@@ -141,7 +141,7 @@ Eigen::Matrix4f Camera::get_projection_matrix()
     return projection;
 }
 
-static int cubemap_face(const Eigen::Vector3f vector) {
+static int cubemap_face(const Eigen::Vector3f& vector) {
     Eigen::Vector3f abs = vector.cwiseAbs();
     if (abs.x() > abs.y() && abs.x() > abs.z())
         return vector.x() < 0 ? 0 : 1;
@@ -150,7 +150,25 @@ static int cubemap_face(const Eigen::Vector3f vector) {
     else return vector.z() < 0 ? 4 : 5;
 }
 
-float PointLight::sample_shadowmap(Eigen::Vector3f vector, float NdotL) {
+#define NUM_RINGS 3
+static void poissonDiskSamples(
+    float seed, Eigen::Vector2f samples[], int number)
+{
+    float angle_step = 2 * MY_PI * float(NUM_RINGS) / float(number);
+    float radius_step = 1.0 / float(number);
+    float radius = radius_step, angle = seed * 2 * MY_PI;
+    for (int i = 0; i < number; i++)
+    {
+        samples[i] = Eigen::Vector2f(std::cos(angle), std::sin(angle));
+        samples[i] *= std::pow(radius, 0.75);
+        radius += radius_step;
+        angle += angle_step;
+    }
+}
+
+float PointLight::shadowmap(const Eigen::Vector3f& vector, float NdotL)
+{
+    const float bias = 5e-3;
     int id = cubemap_face(vector);
     Eigen::Matrix4f matrix = shadow_view_matrix(id);
     Eigen::Matrix4f project = camera.get_projection_matrix();
@@ -160,62 +178,100 @@ float PointLight::sample_shadowmap(Eigen::Vector3f vector, float NdotL) {
     float u = std::min(std::max((target.x() + 1.0f) * width * 0.5f, 0.0f), width - 0.1f);
     float v = std::min(std::max((target.y() + 1.0f) * height * 0.5f, 0.0f), height - 0.1f);
     int index = (height - int(v) - 1) * width + int(u);
-    float depth = -project(11) / (shadowmaps[id][index] - project(10));
-    target.z() = -project(11) / (target.z() - project(10));
-    return target.z() < depth + 5e-1 + (1.0 - NdotL) * 5e-1;
+    float depth = shadowmaps[id][index];
+    if (isinf(depth)) { return 1.0; }
+    depth = -project(2, 3) / (depth - project(2, 2));
+    target.z() = -project(2, 3) / (target.z() - project(2, 2));
+    return target.z() < depth + (2.0 - NdotL) * bias;
 }
 
-float PointLight::pcss(Eigen::Vector3f vector, float NdotL)
+#define NUM_SAMPLES 10
+float PointLight::pcf(const Eigen::Vector3f& vector, float NdotL)
 {
-    int samples = 21;
-    static Eigen::Vector3f sampleOffsetDirections[21] =
-    {
-        Eigen::Vector3f(0, 0, 0),
-        Eigen::Vector3f(1, 1, 1), Eigen::Vector3f(1, -1, 1),
-        Eigen::Vector3f(-1, -1, 1), Eigen::Vector3f(-1, 1, 1),
-        Eigen::Vector3f(1, 1, -1), Eigen::Vector3f(1, -1, -1),
-        Eigen::Vector3f(-1, -1, -1), Eigen::Vector3f(-1, 1, -1),
-        Eigen::Vector3f(1, 1, 0), Eigen::Vector3f(1, -1, 0),
-        Eigen::Vector3f(-1, -1, 0), Eigen::Vector3f(-1, 1, 0),
-        Eigen::Vector3f(1, 0, 1), Eigen::Vector3f(-1, 0, 1),
-        Eigen::Vector3f(1, 0, -1), Eigen::Vector3f(-1, 0, -1),
-        Eigen::Vector3f(0, 1, 1), Eigen::Vector3f(0, -1, 1),
-        Eigen::Vector3f(0, -1, -1), Eigen::Vector3f(0, 1, -1)
-    };
+    const float bias = 5e-3;
+    const float world_radius = 0.2;
+    int id = cubemap_face(vector);
+    Eigen::Matrix4f matrix = shadow_view_matrix(id);
     Eigen::Matrix4f project = camera.get_projection_matrix();
+    matrix = project * matrix;
+    Eigen::Vector4f target = matrix * vec3_to_vec4(vector + position(), 1.0);
+    target /= target.w();
+    Eigen::Vector2f uv(
+        std::min(std::max((target.x() + 1.0f) * 0.5f, 0.0f), 1 - 1e-5f),
+        std::min(std::max((target.y() + 1.0f) * 0.5f, 0.0f), 1 - 1e-5f));
+    float radius = world_radius / (2 * std::abs(vector(id / 2)));
+    float depth = -project(2, 3) / (target.z() - project(2, 2));
 
-    float dblock = 0.0, dreceiver = 0.0;
-    float diskRadius = 0.1;
-    for (int i = 0; i < samples; i++) {
-        Eigen::Vector3f sample = vector + sampleOffsetDirections[i] * diskRadius;
-        int id = cubemap_face(sample);
-        Eigen::Matrix4f matrix = shadow_view_matrix(id);
-        matrix = project * matrix;
-        Eigen::Vector4f target = matrix * vec3_to_vec4(sample + position(), 1.0);
-        target /= target.w();
-        float u = std::min(std::max((target.x() + 1.0f) * width * 0.5f, 0.0f), width - 0.1f);
-        float v = std::min(std::max((target.y() + 1.0f) * height * 0.5f, 0.0f), height - 0.1f);
-        int index = (height - int(v) - 1) * width + int(u);
-        if (i == 0) { dreceiver = -project(11) / (target.z() - project(10)); }
-        dblock += -project(11) / (shadowmaps[id][index] - project(10));
+    int samples = NUM_SAMPLES;
+    Eigen::Vector2f sampleOffsets[NUM_SAMPLES];
+    poissonDiskSamples(rand(), sampleOffsets, samples);
+    float shadow = 0.0;
+    Eigen::Vector2f size(width, height);
+
+    for (int i = 0; i < samples; i++)
+    {
+        Eigen::Vector2f sample = uv + sampleOffsets[i] * radius;
+        sample = sample.cwiseMin(1.0 - 1e-5).cwiseMax(0.0).cwiseProduct(size);
+        int index = (size.y() - int(sample.y()) - 1) * size.x() + int(sample.x());
+        float closest = shadowmaps[id][index];
+        if (isinf(closest)) { shadow += 1.0; }
+        closest = -project(2, 3) / (closest - project(2, 2));
+        if (depth < closest + (2.0 - NdotL) * bias) { shadow += 1; }
     }
-    dblock /= samples;
-    float radius = (dreceiver - dblock) * lightsize / dblock;
-    if (radius <= 1e-5) { return 1.0; }
+    return shadow / samples;
+}
+
+float PointLight::pcss(const Eigen::Vector3f& vector, float NdotL)
+{
+    const float bias = 5e-3;
+    int id = cubemap_face(vector);
+    Eigen::Matrix4f matrix = shadow_view_matrix(id);
+    Eigen::Matrix4f project = camera.get_projection_matrix();
+    matrix = project * matrix;
+    Eigen::Vector4f target = matrix * vec3_to_vec4(vector + position(), 1.0);
+    target /= target.w();
+    Eigen::Vector2f uv(
+        std::min(std::max((target.x() + 1.0f) * 0.5f, 0.0f), 1 - 1e-5f),
+        std::min(std::max((target.y() + 1.0f) * 0.5f, 0.0f), 1 - 1e-5f));
+    float dreceiver = -project(2, 3) / (target.z() - project(2, 2));
+
+    const float world_radius = 0.2;
+    float radius = world_radius / (2 * std::abs(vector(id / 2)));
+
+    int samples = NUM_SAMPLES;
+    Eigen::Vector2f size(width, height);
+    Eigen::Vector2f sampleOffsets[NUM_SAMPLES];
+    poissonDiskSamples(rand(), sampleOffsets, samples);
+
+    float dblock = 0.0, count = 0.0;
+    for (int i = 0; i < samples; i++)
+    {
+        Eigen::Vector2f sample = uv + sampleOffsets[i] * radius;
+        sample = sample.cwiseMin(1.0 - 1e-5).cwiseMax(0.0).cwiseProduct(size);
+        int index = (size.y() - int(sample.y()) - 1) * size.x() + int(sample.x());
+        float closest = shadowmaps[id][index];
+        if (isinf(closest)) { continue; }
+        closest = -project(2, 3) / (closest - project(2, 2));
+        if (dreceiver >= closest + (2.0 - NdotL) * bias) {
+            dblock += closest;
+            count += 1;
+        }
+    }
+    if (count == 0) { return 1.0; }
+    dblock /= count;
+    radius = (dreceiver - dblock) * lightsize / dblock;
+    radius = radius / (2 * std::abs(vector(id / 2)));
 
     float shadow = 0.0;
-    for (int i = 0; i < samples; i++) {
-        Eigen::Vector3f sample = vector + sampleOffsetDirections[i] * radius;
-        int id = cubemap_face(sample);
-        Eigen::Matrix4f matrix = shadow_view_matrix(id);
-        matrix = project * matrix;
-        Eigen::Vector4f target = matrix * vec3_to_vec4(sample + position(), 1.0);
-        target /= target.w();
-        float u = std::min(std::max((target.x() + 1.0f) * width * 0.5f, 0.0f), width - 0.1f);
-        float v = std::min(std::max((target.y() + 1.0f) * height * 0.5f, 0.0f), height - 0.1f);
-        int index = (height - int(v) - 1) * width + int(u);
-        float depth = -project(11) / (shadowmaps[id][index] - project(10));
-        if (dreceiver < depth + 1 + (1.0 - NdotL) * 1) { shadow += 1; }
+    for (int i = 0; i < samples; i++)
+    {
+        Eigen::Vector2f sample = uv + sampleOffsets[i] * radius;
+        sample = sample.cwiseMin(1.0 - 1e-5).cwiseMax(0.0).cwiseProduct(size);
+        int index = (size.y() - int(sample.y()) - 1) * size.x() + int(sample.x());
+        float closest = shadowmaps[id][index];
+        if (isinf(closest)) { shadow += 1.0; }
+        closest = -project(2, 3) / (closest - project(2, 2));
+        if (dreceiver < closest + (2.0 - NdotL) * bias) { shadow += 1; }
     }
     return shadow / samples;
 }

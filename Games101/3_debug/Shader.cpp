@@ -118,7 +118,7 @@ Eigen::Vector3f phong_shadow_fragment_shader(const fragment_shader_payload& payl
         light_v = light_v.normalized();
         Eigen::Vector3f half_v = (light_v + out_v).normalized();
         float NdotL = normal.dot(light_v);
-        float shadow = light->sample_shadowmap(point - light->position(), NdotL);
+        float shadow = light->pcss(point - light->position(), NdotL);
         diffuse += light->intensity * shadow * std::max(NdotL, 0.0f) * light_attenuation;
         specular += light->intensity * shadow * std::pow(std::max(normal.dot(half_v), 0.0f), p) * light_attenuation;
     }
@@ -164,7 +164,7 @@ Eigen::Vector3f texture_shadow_fragment_shader(const fragment_shader_payload& pa
         light_v = light_v.normalized();
         Eigen::Vector3f half_v = (light_v + out_v).normalized();
         float NdotL = normal.dot(light_v);
-        float shadow = light->sample_shadowmap(point - light->position(), NdotL);
+        float shadow = light->pcss(point - light->position(), NdotL);
         diffuse += light->intensity * shadow * std::max(NdotL, 0.0f) * light_attenuation;
         specular += light->intensity * shadow * std::pow(std::max(normal.dot(half_v), 0.0f), p) * light_attenuation;
     }

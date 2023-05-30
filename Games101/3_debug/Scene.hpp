@@ -64,7 +64,7 @@ public:
 	int width, height;
 	std::vector<float> shadowmaps[6];
 	Eigen::Matrix4f shadow_view_rotations[6];
-	float lightsize = 10.0;
+	float lightsize = 1.0;
 
 	PointLight(Camera camera, Eigen::Vector3f intensity, int width, int height);
 
@@ -73,8 +73,10 @@ public:
 	}
 
 	Eigen::Matrix4f shadow_view_matrix(int id);
-	float sample_shadowmap(Eigen::Vector3f vector, float NdotL);
-	float pcss(Eigen::Vector3f vector, float NdotL);
+
+	float shadowmap(const Eigen::Vector3f& vector, float NdotL);
+	float pcf(const Eigen::Vector3f& vector, float NdotL);
+	float pcss(const Eigen::Vector3f& vector, float NdotL);
 };
 
 class Scene
