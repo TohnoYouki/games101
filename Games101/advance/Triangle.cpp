@@ -20,10 +20,10 @@ Triangle::Triangle() {
     tex_coords[2] << 0.0, 0.0;
 }
 
-void Triangle::setVertex(int ind, Vector4f ver){
+void Triangle::setVertex(int ind, Eigen::Vector4f ver){
     v[ind] = ver;
 }
-void Triangle::setNormal(int ind, Vector3f n){
+void Triangle::setNormal(int ind, Eigen::Vector3f n){
     normal[ind] = n;
 }
 void Triangle::setColor(int ind, float r, float g, float b) {
@@ -35,28 +35,28 @@ void Triangle::setColor(int ind, float r, float g, float b) {
         exit(-1);
     }
 
-    color[ind] = Vector3f((float)r/255.,(float)g/255.,(float)b/255.);
+    color[ind] = Eigen::Vector3f((float)r/255.,(float)g/255.,(float)b/255.);
     return;
 }
-void Triangle::setTexCoord(int ind, Vector2f uv) {
+void Triangle::setTexCoord(int ind, Eigen::Vector2f uv) {
     tex_coords[ind] = uv;
 }
 
-std::array<Vector4f, 3> Triangle::toVector4() const
+std::array<Eigen::Vector4f, 3> Triangle::toVector4() const
 {
-    std::array<Vector4f, 3> res;
-    std::transform(std::begin(v), std::end(v), res.begin(), [](auto& vec) { return Vector4f(vec.x(), vec.y(), vec.z(), 1.f); });
+    std::array<Eigen::Vector4f, 3> res;
+    std::transform(std::begin(v), std::end(v), res.begin(), [](auto& vec) { return Eigen::Vector4f(vec.x(), vec.y(), vec.z(), vec.w()); });
     return res;
 }
 
-void Triangle::setNormals(const std::array<Vector3f, 3>& normals)
+void Triangle::setNormals(const std::array<Eigen::Vector3f, 3>& normals)
 {
     normal[0] = normals[0];
     normal[1] = normals[1];
     normal[2] = normals[2];
 }
 
-void Triangle::setColors(const std::array<Vector3f, 3>& colors)
+void Triangle::setColors(const std::array<Eigen::Vector3f, 3>& colors)
 {
     auto first_color = colors[0];
     setColor(0, colors[0][0], colors[0][1], colors[0][2]);

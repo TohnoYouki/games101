@@ -1,302 +1,153 @@
-#include <iostream>
+﻿#include <iostream>
+#include "Scene.hpp"
+#include "global.hpp"
+#include "Timer.hpp"
+#include "Texture.hpp"
+#include "Rasterizer.hpp"
 #include <opencv2/opencv.hpp>
 
-#include <thread>
-#include "global.hpp"
-#include "rasterizer.hpp"
-#include "Triangle.hpp"
-#include "Shader.hpp"
-#include "Texture.hpp"
-#include "OBJ_Loader.h"
+int width = 700, height = 700;
 
-Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
+struct RenderThreadPayload
 {
-    Eigen::Matrix4f view = Eigen::Matrix4f::Identity();
-
-    Eigen::Matrix4f translate;
-    translate << 1,0,0,-eye_pos[0],
-                 0,1,0,-eye_pos[1],
-                 0,0,1,-eye_pos[2],
-                 0,0,0,1;
-
-    view = translate*view;
-
-    return view;
-}
-
-Eigen::Matrix4f get_model_matrix(float angle, Vector3f position)
-{
-    Eigen::Matrix4f rotation;
-    angle = angle * MY_PI / 180.f;
-    rotation << cos(angle), 0, sin(angle), 0,
-                0, 1, 0, 0,
-                -sin(angle), 0, cos(angle), 0,
-                0, 0, 0, 1;
-
-    Eigen::Matrix4f scale;
-    scale << 2.5, 0, 0, 0,
-              0, 2.5, 0, 0,
-              0, 0, 2.5, 0,
-              0, 0, 0, 1;
-
-    Eigen::Matrix4f translate;
-    translate << 1, 0, 0, position.x(),
-            0, 1, 0, position.y(),
-            0, 0, 1, position.z(),
-            0, 0, 0, 1;
-
-    return translate * rotation * scale;
-}
-
-Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float zNear, float zFar)
-{
-    // TODO: Use the same projection matrix from the previous assignments
-    Eigen::Matrix4f projection;
-    double tanv = tan(eye_fov / 2);
-    projection << -1.0 / tanv, 0, 0, 0,
-        0, -aspect_ratio / tanv, 0, 0,
-        0, 0, (zNear + zFar) / (zNear - zFar), 2 * zNear * zFar / (zFar - zNear),
-        0, 0, 1, 0;
-    return projection;
-}
-
-Eigen::Vector3f vertex_shader(const vertex_shader_payload& payload)
-{
-    return payload.position;
-}
-
-struct light
-{
-    Eigen::Vector3f position;
-    Eigen::Vector3f intensity;
-};
-
-Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload& payload)
-{
-    Eigen::Vector3f return_color = { 0, 0, 0 };
-    if (payload.texture)
-    {
-        return_color = payload.texture->getColor(payload.tex_coords.x(), payload.tex_coords.y());
-    }
-    Eigen::Vector3f texture_color;
-    texture_color << return_color.x(), return_color.y(), return_color.z();
-
-    Eigen::Vector3f ka = Eigen::Vector3f(0.005, 0.005, 0.005);
-    Eigen::Vector3f kd = texture_color / 255.f;
-    Eigen::Vector3f ks = Eigen::Vector3f(0.7937, 0.7937, 0.7937);
-
-    auto l1 = light{ {20, 20, 20}, {500, 500, 500} };
-    auto l2 = light{ {-20, 20, 0}, {500, 500, 500} };
-
-    std::vector<light> lights = { l1, l2 };
-    Eigen::Vector3f amb_light_intensity{ 10, 10, 10 };
-    Eigen::Vector3f eye_pos{ 0, 0, 10 };
-
-    float p = 150;
-
-    Eigen::Vector3f color = texture_color;
-    Eigen::Vector3f point = payload.view_pos;
-    Eigen::Vector3f normal = payload.normal;
-
-    Eigen::Vector3f result_color = { 0, 0, 0 };
-
-    Eigen::Vector3f ambient = amb_light_intensity;
-    Eigen::Vector3f diffuse = { 0, 0, 0 };
-    Eigen::Vector3f specular = { 0, 0, 0 };
-
-    Vector3f output_vector = (eye_pos - point).normalized();
-
-    for (auto& light : lights)
-    {
-        Vector3f light_vector = light.position - point;
-        float light_attenuation = light_vector.squaredNorm();
-        light_vector = light_vector.normalized();
-        Vector3f half_vector = (light_vector + output_vector).normalized();
-
-        diffuse += light.intensity * std::max(normal.dot(light_vector), 0.0f) / light_attenuation;
-        specular += light.intensity * std::pow(std::max(normal.dot(half_vector), 0.0f), p) / light_attenuation;
-    }
-
-    result_color = ka.cwiseProduct(ambient) + kd.cwiseProduct(diffuse) + ks.cwiseProduct(specular);
-
-    return result_color * 255.f;
-}
-
-Eigen::Vector3f phong_fragment_shader(const fragment_shader_payload& payload)
-{
-    Eigen::Vector3f ka = Eigen::Vector3f(0.005, 0.005, 0.005);
-    Eigen::Vector3f kd = payload.color;
-    Eigen::Vector3f ks = Eigen::Vector3f(0.7937, 0.7937, 0.7937);
-
-    auto l1 = light{{20, 20, 20}, {500, 500, 500}};
-    auto l2 = light{{-20, 20, 0}, {500, 500, 500}};
-
-    std::vector<light> lights = {l1, l2};
-    Eigen::Vector3f amb_light_intensity{10, 10, 10};
-    Eigen::Vector3f eye_pos{0, 0, 10};
-
-    float p = 150;
-
-    Eigen::Vector3f color = payload.color;
-    Eigen::Vector3f point = payload.view_pos;
-    Eigen::Vector3f normal = payload.normal;
-
-    Eigen::Vector3f result_color = {0, 0, 0};
-    Eigen::Vector3f ambient = amb_light_intensity;
-    Eigen::Vector3f diffuse = { 0, 0, 0 };
-    Eigen::Vector3f specular = { 0, 0, 0 };
-
-    Vector3f output_vector = (eye_pos - point).normalized();
-
-    for (auto& light : lights)
-    {
-        Vector3f light_vector = light.position - point;
-        float light_attenuation = light_vector.squaredNorm();
-        light_vector = light_vector.normalized();
-        Vector3f half_vector = (light_vector + output_vector).normalized();
-
-        diffuse += light.intensity * std::max(normal.dot(light_vector), 0.0f) / light_attenuation;
-        specular += light.intensity * std::pow(std::max(normal.dot(half_vector), 0.0f), p) / light_attenuation;
-    }
-
-    result_color = ka.cwiseProduct(ambient) + kd.cwiseProduct(diffuse) + ks.cwiseProduct(specular);
-    return result_color * 255.f;
-}
-
-struct RasterizerPayload
-{
-    Vector3f eye_pos;
-    float angle;
-    float position;
-    std::vector<Triangle*> triangleList;
-};
-
-struct RenderThreadPayload 
-{
+    int key;
     bool exit = false;
-    std::mutex framebuf_mutexs[rst::Rasterizer::SWAPCHAIN_NUM];
-    rst::Rasterizer rasterizer = rst::Rasterizer(700, 700);
-    rst::JobThread threads = rst::JobThread(8);
-    std::mutex rasterizer_mutex;
-    RasterizerPayload rasterizer_payload;
+    Scene scene;
+    SwapChain swapchain = SwapChain(width, height);
+    Rasterizer rasterizer = Rasterizer();
+    JobThread threads = JobThread(12);
 };
 
-void render_thread_fn(RenderThreadPayload * payload)
+void build_scene(Scene& scene)
 {
-    int image_index = 0;
+    scene.meshes.push_back(load_mesh("../models/spot/spot_triangulated_good.obj"));
+    scene.meshes.push_back(plane(15));
+    scene.textures.push_back(Texture("../models/spot/spot_texture.png"));
+    scene.camera = { Transform({1.0, {0, 9, 10}, {0.0, -45.0, 0.0}}), 45, 1, 0.1, 50 };
+    scene.objects.push_back(MeshObject{ Transform{2.5, {2.5, 0.0, 0.0},
+                                        {140.0, 0.0, 0.0}}, &(scene.meshes[0]),
+                                         vertex_shader, texture_shadow_fragment_shader });
+    scene.objects.push_back(MeshObject{ Transform{2.5, {-2.5, 0.0, 0.0},
+                                        {-140.0, 0.0, 0.0}}, &(scene.meshes[0]),
+                                         vertex_shader, texture_shadow_fragment_shader });
+    scene.objects.push_back(MeshObject{ Transform{1.0, {0.0, -1.8, 0.0}, {0.0, -90.0, 0.0}},
+                                        &(scene.meshes[1]), vertex_shader, phong_shadow_fragment_shader });
+    scene.lights.push_back(PointLight{ Camera{ Transform{ 1.0, {10, 10, 10}, {0.0, 0.0, 0.0} },
+                                       90, 1, 0.1, 50 }, { 100, 100, 100 }, width * 2, height * 2 });
+    scene.lights.push_back(PointLight{ Camera { Transform{ 1.0, {-10, 10, 10}, {0.0, 0.0, 0.0} },
+                                       90, 1, 0.1, 50 }, { 100, 100, 100 }, width * 2, height * 2 });
+    scene.pcameras.push_back(&(scene.camera));
+    for (auto& object : scene.lights) {
+        scene.pcameras.push_back(&(object.camera));
+    }
+}
+
+void update_scene(Scene& scene, int* key)
+{
+    std::unique_lock<std::mutex> lock(scene.mutex);
+    Transform* transform = nullptr;
+    if (*key == 32) {
+        scene.object_index = (scene.object_index + 1) % (scene.objects.size() + 1);
+    }
+    else if (*key == 13) {
+        scene.object_index = 0;
+        scene.camera_index = (scene.camera_index + 1) % scene.pcameras.size();
+    }
+    if (scene.object_index <= 0) {
+        transform = &(scene.pcameras[scene.camera_index]->transform);
+    }
+    else { transform = &(scene.objects[scene.object_index - 1].transform); }
+
+    switch (*key) {
+    case 'w': transform->translate(Eigen::Vector3f(0, 0.1, 0)); break;
+    case 's': transform->translate(Eigen::Vector3f(0, -0.1, 0)); break;
+    case 'a': transform->translate(Eigen::Vector3f(-0.1, 0, 0)); break;
+    case 'd': transform->translate(Eigen::Vector3f(0.1, 0, 0)); break;
+    case 'q': transform->translate(Eigen::Vector3f(0, 0, 0.1)); break;
+    case 'e': transform->translate(Eigen::Vector3f(0, 0, -0.1)); break;
+    case 'j': transform->rotate(Eigen::Vector3f(-1.0, 0, 0)); break;
+    case 'l': transform->rotate(Eigen::Vector3f(1.0, 0, 0)); break;
+    case 'i': transform->rotate(Eigen::Vector3f(0, 1.0, 0)); break;
+    case 'k': transform->rotate(Eigen::Vector3f(0, -1.0, 0)); break;
+    case 'u': transform->rotate(Eigen::Vector3f(0, 0, -1.0)); break;
+    case 'o': transform->rotate(Eigen::Vector3f(0, 0, 1.0)); break;
+    case 'm': for (auto& light : scene.lights) { light.shadow_type = (light.shadow_type + 1) % 3; }; break;
+    case 'r': for (auto& light : scene.lights) { light.rotate = !light.rotate; }; break;
+    }
+    for (auto& light : scene.lights) { 
+        if (light.rotate) {
+            light.camera.transform.rotate(Eigen::Vector3f(-1.0, 0, 0));
+        }
+    }
+}
+
+void render_thread_fn(RenderThreadPayload* payload)
+{
+    Rasterizer* r = &(payload->rasterizer);
+    r->uniform.camera = &(payload->scene.camera);
+    r->uniform.textures = { &(payload->scene.textures[0]) };
+    r->uniform.lights = { &(payload->scene.lights[0]), &(payload->scene.lights[1]) };
     while (!payload->exit) {
-        std::unique_lock<std::mutex> lock(payload->framebuf_mutexs[image_index]);
-
-        std::unique_lock<std::mutex> data_lock(payload->rasterizer_mutex);
-        float angle = payload->rasterizer_payload.angle;
-        Vector3f eye_pos = payload->rasterizer_payload.eye_pos;
-        float position = payload->rasterizer_payload.position;
-        data_lock.unlock();
-
-        rst::Rasterizer* r = &(payload->rasterizer);
-        r->clear(rst::Buffers::Color | rst::Buffers::Depth, image_index);
-
-        r->set_model(get_model_matrix(angle, Vector3f(position, 0.0f, 0.0f)));
-        r->set_view(get_view_matrix(eye_pos));
-        r->set_projection(get_projection_matrix(45.0, 1, 0.1, 50));
-        r->draw(payload->rasterizer_payload.triangleList, image_index, payload->threads);
-
-        r->set_model(get_model_matrix(-angle, Vector3f(-position, 0.0f, 0.0f)));
-        r->set_view(get_view_matrix(eye_pos));
-        r->set_projection(get_projection_matrix(45.0, 1, 0.1, 50));
-        r->draw(payload->rasterizer_payload.triangleList, image_index, payload->threads);
-
-        image_index = (image_index + 1) % payload->rasterizer.SWAPCHAIN_NUM;
-        //data_lock.unlock();
-        lock.unlock();
+        update_scene(payload->scene, &(payload->key));
+        FrameBuffer buffer = payload->swapchain.get_next_render_framebuffer();
+        buffer.clear(BufferTypes::Color | BufferTypes::Depth);
+        
+        r->backface_cull = false;
+        for (auto& light : payload->scene.lights) {
+            for (int i = 0; i < 6; i++) {
+                FrameBuffer depth_buf = FrameBuffer{ light.width, light.height, &(light.shadowmaps[i]), nullptr };
+                depth_buf.clear(BufferTypes::Depth);
+                for (int j = 0; j < payload->scene.objects.size(); j++) {
+                    r->set_vertex_shader(payload->scene.objects[j].vertex_shader);
+                    r->set_fragment_shader(nullptr);
+                    r->set_model(payload->scene.objects[j].transform.get_model_matrix());
+                    r->set_view(light.shadow_view_matrix(i));
+                    r->set_projection(light.camera.get_projection_matrix());
+                    r->draw(*(payload->scene.objects[j].mesh), payload->threads, depth_buf);
+                }
+            }
+        }
+        
+        r->backface_cull = true;
+        Camera* camera = payload->scene.pcameras[payload->scene.camera_index];
+        for (auto& light : payload->scene.lights) {
+            light.generate_poisson_disk_samples();
+        }
+        for (int i = 0; i < payload->scene.objects.size(); i++)
+        {
+            r->set_vertex_shader(payload->scene.objects[i].vertex_shader);
+            r->set_fragment_shader(payload->scene.objects[i].fragment_shader);
+            r->set_model(payload->scene.objects[i].transform.get_model_matrix());
+            r->set_view(camera->get_view_matrix());
+            r->set_projection(camera->get_projection_matrix());
+            r->draw(*(payload->scene.objects[i].mesh), payload->threads, buffer);
+        }
     }
 }
 
 int main(int argc, const char** argv)
 {
     RenderThreadPayload payload;
-
-    std::string filename = "output.png";
-    objl::Loader Loader;
-    std::string obj_path = "../models/spot/";
-    // Load .obj File
-    bool loadout = Loader.LoadFile("../models/spot/spot_triangulated_good.obj");
-    for(auto mesh:Loader.LoadedMeshes)
-    {
-        for(int i=0;i<mesh.Vertices.size();i+=3)
-        {
-            Triangle* t = new Triangle();
-            for(int j=0;j<3;j++)
-            {
-                t->setVertex(j,Vector4f(mesh.Vertices[i+j].Position.X,
-                                        mesh.Vertices[i+j].Position.Y,
-                                        mesh.Vertices[i+j].Position.Z,1.0));
-                t->setNormal(j,Vector3f(mesh.Vertices[i+j].Normal.X,
-                                        mesh.Vertices[i+j].Normal.Y,
-                                        mesh.Vertices[i+j].Normal.Z));
-                t->setTexCoord(j,Vector2f(mesh.Vertices[i+j].TextureCoordinate.X, 
-                                          mesh.Vertices[i+j].TextureCoordinate.Y));
-            }
-            payload.rasterizer_payload.triangleList.push_back(t);
-        }
-    }
-
-    payload.rasterizer_payload.eye_pos = { 0,0,10 };
-    payload.rasterizer_payload.angle = 140.0;
-    payload.rasterizer_payload.position = 2.5f;
-    
-    auto texture_path = "spot_texture.png";
-    payload.rasterizer.set_texture(Texture(obj_path + texture_path));
-
-    payload.rasterizer.set_vertex_shader(vertex_shader);
-    payload.rasterizer.set_fragment_shader(texture_fragment_shader);
-
+    build_scene(payload.scene);
     std::thread render_thread(render_thread_fn, &payload);
 
-    float fps = 0.0;
-    int key = 0, image_index = 0;
-    int frame_count = 0, last_frame_count = 0;
-    clock_t last_time = clock(), now_time = clock();
-    
-    while(key != 27)
+    FrameCounter frame_counter(0.5);
+    while (payload.key != 27)
     {
-        now_time = clock();
-        if (double(now_time - last_time) >= CLOCKS_PER_SEC * 0.5) {
-            fps = (frame_count - last_frame_count) * CLOCKS_PER_SEC / double(now_time - last_time);
-            last_time = now_time;
-            last_frame_count = frame_count;
-        }
-
-        std::unique_lock<std::mutex> lock(payload.framebuf_mutexs[image_index]);
-
-        cv::Mat image(700, 700, CV_32FC3, payload.rasterizer.frame_buffer(image_index).data());
+        float fps = frame_counter.latest_fps();
+        FrameBuffer buffer = payload.swapchain.get_next_present_framebuffer();
+        cv::Mat image(buffer.width, buffer.height, CV_32FC3, buffer.frame_buf->data());
         cv::putText(image, "fps:" + std::to_string(fps), cv::Point(50, 50),
             cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(255, 255, 255));
         image.convertTo(image, CV_8UC3, 1.0f);
         cv::cvtColor(image, image, cv::COLOR_RGB2BGR);
         cv::imshow("image", image);
 
+        std::unique_lock<std::mutex> lock(payload.scene.mutex);
+        payload.key = cv::waitKey(1);
         lock.unlock();
-
-        key = cv::waitKey(1);
-        std::unique_lock<std::mutex> data_lock(payload.rasterizer_mutex);
-        if (key == 'a' ) {
-            payload.rasterizer_payload.angle -= 1;
-        }
-        else if (key == 'd') {
-            payload.rasterizer_payload.angle += 1;
-        }
-        else if (key == 'w') {
-            payload.rasterizer_payload.position += 0.1;
-        }
-        else if (key == 's') {
-            payload.rasterizer_payload.position -= 0.1;
-        }
-        data_lock.unlock();
-
-        image_index = (image_index + 1) % payload.rasterizer.SWAPCHAIN_NUM;
-        frame_count++;
     }
+
     payload.exit = true;
     render_thread.join();
     return 0;
