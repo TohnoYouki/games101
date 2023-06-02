@@ -18,11 +18,12 @@ class Rasterizer
 public:
     bool backface_cull = true;
     struct RasterizerThreadPayload {
+        std::atomic<int> count;
         std::mutex mutex;
         Rasterizer* rasterizer;
         FrameBuffer* framebuffer;
         const std::vector<Triangle>* model_triangles;
-        std::vector<Eigen::Vector3f> worldpos;
+        std::vector<Eigen::Vector3f> world_pos;
         std::vector<Triangle> screen_triangles;
     };
 private:

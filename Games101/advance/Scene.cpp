@@ -255,7 +255,6 @@ float PointLight::pcss(const Eigen::Vector3f& vector, float NdotL)
 
     const float world_radius = 0.2;
     float radius = world_radius / (2 * std::abs(vector(id / 2)));
-    int samples = NUM_SAMPLES;
     int aindex = rand() % NUM_ARRAY;
 
     float dblock = 0.0, count = 0.0;
@@ -279,7 +278,7 @@ float PointLight::pcss(const Eigen::Vector3f& vector, float NdotL)
 
     float shadow = 0.0;
     aindex = rand() % NUM_ARRAY;
-    for (int i = 0; i < samples; i++)
+    for (int i = 0; i < NUM_SAMPLES; i++)
     {
         Eigen::Vector2f offset = pcf_samples[aindex * NUM_SAMPLES + i];
         float u = std::min(std::max(uv.x() + offset.x() * radius, 0.0f), 1.0f - 1e-5f) * width;
@@ -290,7 +289,7 @@ float PointLight::pcss(const Eigen::Vector3f& vector, float NdotL)
         closest = -project(2, 3) / (closest - project(2, 2));
         if (dreceiver < closest + bias) { shadow += 1; }
     }
-    return shadow / samples;
+    return shadow / NUM_SAMPLES;
 }
 
 float PointLight::shadow(const Eigen::Vector3f& vector, float NdotL)

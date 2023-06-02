@@ -183,11 +183,19 @@ void Rasterizer::transform_triangle(int id, int thread_num, void* ppayload)
             newtri.color[1] = { 148 / 255.0, 121.0 / 255.0, 92.0 / 255.0 };
             newtri.color[2] = { 148 / 255.0, 121.0 / 255.0, 92.0 / 255.0 };
 
-            std::unique_lock<std::mutex> lock(payload->mutex);
-            payload->screen_triangles.push_back(newtri);
-            for (int j = 0; j < 3; j++)
-                payload->worldpos.push_back(worldpos[j]);
-            lock.unlock();
+            int id = payload->count.fetch_add(1);
+            if (id < payload->model_triangles->size()) {
+                payload->screen_triangles[id] = newtri;
+                for (int j = 0; j < 3; j++) {
+                    payload->world_pos[id * 3 + j] = worldpos[j];
+                }
+            } else {
+                std::unique_lock<std::mutex> lock(payload->mutex);
+                payload->screen_triangles.push_back(newtri);
+                for (int j = 0; j < 3; j++)
+                    payload->world_pos.push_back(worldpos[j]);
+                lock.unlock();
+            }
         }
     }
 }
@@ -219,9 +227,9 @@ void Rasterizer::rasterize_triangle(int id, int thread_num, void* ppayload)
     for (int k = 0; k < payload->screen_triangles.size(); k++)
     {
         const Triangle* t = &(payload->screen_triangles[k]);
-        std::array<Eigen::Vector3f, 3> world_pos = { payload->worldpos[k * 3],
-                                                     payload->worldpos[k * 3 + 1],
-                                                     payload->worldpos[k * 3 + 2] };
+        std::array<Eigen::Vector3f, 3> world_pos = { payload->world_pos[k * 3],
+                                                     payload->world_pos[k * 3 + 1],
+                                                     payload->world_pos[k * 3 + 2] };
         auto v = t->toVector4();
         bool backface = (v[2].y() - v[0].y()) * (v[1].x() - v[0].x())
             < (v[2].x() - v[0].x()) * (v[1].y() - v[0].y());
@@ -265,14 +273,16 @@ void Rasterizer::rasterize_triangle(int id, int thread_num, void* ppayload)
 void Rasterizer::draw(std::vector<Triangle>& TriangleList, JobThread& threads, FrameBuffer& framebuffer) {
     JobThread::ThreadTaskPayload task_payload;
     RasterizerThreadPayload data_payload;
+    data_payload.count = 0;
     data_payload.rasterizer = this;
     data_payload.framebuffer = &(framebuffer);
     data_payload.model_triangles = &(TriangleList);
-    data_payload.screen_triangles.reserve(TriangleList.size());
-    data_payload.worldpos.reserve(TriangleList.size() * 3);
+    data_payload.screen_triangles.resize(TriangleList.size());
+    data_payload.world_pos.resize(TriangleList.size() * 3);
     task_payload.payload = static_cast<void*>(&data_payload);
     task_payload.task = transform_triangle;
     threads.wake_thread_job(task_payload);
+    data_payload.screen_triangles.resize(data_payload.count);
     task_payload.task = rasterize_triangle;
     threads.wake_thread_job(task_payload);
 }

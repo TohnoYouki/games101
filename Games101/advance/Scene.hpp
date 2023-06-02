@@ -57,7 +57,7 @@ public:
 class PointLight
 {
 public:
-	int shadow_type = 0;
+	int shadow_type = 2;
 	bool rotate = false;
 	Camera camera;
 	Eigen::Vector3f intensity;
